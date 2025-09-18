@@ -47,22 +47,24 @@ def categorize_columns(df):
 
 
 def compute_category_averages(df, categories, file_name):
-    """Compute averages for non-session categories."""
-    category_averages = {}
+    """Compute averages + respondent counts for non-session categories."""
+    category_stats = {}
     for cat in ["PROGRAM MANAGEMENT", "TRAINING VENUE", "FOOD/MEALS", "ACCOMMODATION"]:
         cols = categories[cat]
         if cols:
-            category_averages[cat] = df[cols].mean().mean().round(2)
+            avg_score = df[cols].mean().mean().round(2)
+            respondent_count = df[cols].count().max()  # assumes same respondent count across cols
+            category_stats[cat] = {"Average Score": avg_score, "Respondents (N)": respondent_count}
 
-    if category_averages:
-        summary_df = pd.DataFrame.from_dict(category_averages, orient="index", columns=["Average Score"])
+    if category_stats:
+        summary_df = pd.DataFrame(category_stats).T
         summary_df["File"] = file_name
         return summary_df
     return None
 
 
 def compute_session_averages(df, session_cols, file_name):
-    """Group session columns by DAY/LM and compute averages."""
+    """Group session columns by DAY/LM and compute averages + respondent counts."""
     session_groups = {}
     for col in session_cols:
         col_str = str(col)
@@ -84,8 +86,13 @@ def compute_session_averages(df, session_cols, file_name):
     if not session_groups:
         return None
 
-    session_averages = {s: df[cols].mean().mean().round(2) for s, cols in session_groups.items()}
-    session_df = pd.DataFrame.from_dict(session_averages, orient="index", columns=["Average Score"])
+    session_stats = {}
+    for session, cols in session_groups.items():
+        avg_score = df[cols].mean().mean().round(2)
+        respondent_count = df[cols].count().max()
+        session_stats[session] = {"Average Score": avg_score, "Respondents (N)": respondent_count}
+
+    session_df = pd.DataFrame(session_stats).T
     session_df["File"] = file_name
     return session_df
 
