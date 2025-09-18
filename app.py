@@ -52,9 +52,7 @@ def compute_category_averages(df, categories, file_name):
         sub = df[cols].apply(pd.to_numeric, errors='coerce')
         stacked = sub.stack()
         avg = float(stacked.mean()) if not stacked.empty else float("nan")
-        n = sub.dropna(how="all").shape[0]
-        stats[cat] = {f"{file_name} Avg": round(avg, 2) if pd.notna(avg) else None,
-                      f"{file_name} N": int(n)}
+        stats[cat] = {f"{file_name}": round(avg, 2) if pd.notna(avg) else None}
     return pd.DataFrame(stats).T if stats else None
 
 def compute_session_averages(df, session_cols, file_name):
@@ -81,36 +79,16 @@ def compute_session_averages(df, session_cols, file_name):
         sub = df[cols].apply(pd.to_numeric, errors='coerce')
         stacked = sub.stack()
         avg = float(stacked.mean()) if not stacked.empty else float("nan")
-        n = sub.dropna(how="all").shape[0]
-        stats[session] = {f"{file_name} Avg": round(avg, 2) if pd.notna(avg) else None,
-                          f"{file_name} N": int(n)}
+        stats[session] = {f"{file_name}": round(avg, 2) if pd.notna(avg) else None}
     return pd.DataFrame(stats).T if stats else None
 
 def style_numeric_columns(df):
-    fmt = {}
-    for col in df.columns:
-        if str(col).endswith(" Avg"):
-            fmt[col] = "{:.2f}"
-        elif str(col).endswith(" N"):
-            fmt[col] = "{:.0f}"
-    return df.style.format(fmt)
+    return df.style.format("{:.2f}")
 
 def add_overall_summary(df):
-    """Add a 'Grand Average' row across all files."""
-    avg_cols = [c for c in df.columns if str(c).endswith(" Avg")]
-    n_cols = [c for c in df.columns if str(c).endswith(" N")]
-
-    overall = {}
-    if avg_cols:
-        overall_avg = df[avg_cols].mean(axis=1)
-        overall["Overall Avg"] = overall_avg.round(2)
-    if n_cols:
-        overall_n = df[n_cols].sum(axis=1)
-        overall["Overall N"] = overall_n.astype(int)
-
-    if overall:
-        overall_df = pd.DataFrame(overall, index=df.index)
-        return pd.concat([df, overall_df], axis=1)
+    """Add a 'Grand Average' column across all files."""
+    overall_avg = df.mean(axis=1)
+    df["Overall Avg"] = overall_avg.round(2)
     return df
 
 def make_csv_download(df, filename="summary.csv"):
@@ -164,16 +142,19 @@ if uploaded_files is not None and len(uploaded_files) > 0:
         st.dataframe(style_numeric_columns(final_summary))
         make_csv_download(final_summary, filename="Category_Summary.csv")
 
-        avg_cols = [c for c in final_summary.columns if str(c).endswith(" Avg")]
-        if avg_cols:
-            plot_df = final_summary[avg_cols].reset_index().melt(
-                id_vars="Category", value_vars=avg_cols,
-                var_name="file_var", value_name="Average"
-            )
-            plot_df["File"] = plot_df["file_var"].str.replace(r"\s*Avg$", "", regex=True)
-            fig = px.bar(plot_df, x="Category", y="Average", color="File", barmode="group",
-                         title="Category averages by file (grouped)")
-            st.plotly_chart(fig)
+        fig = px.bar(
+            final_summary.reset_index().melt(
+                id_vars="Category",
+                var_name="File",
+                value_name="Average"
+            ),
+            x="Category",
+            y="Average",
+            color="File",
+            barmode="group",
+            title="Category averages by file"
+        )
+        st.plotly_chart(fig)
 
     # ---- Session comparison ----
     if combined_sessions:
@@ -185,15 +166,18 @@ if uploaded_files is not None and len(uploaded_files) > 0:
         st.dataframe(style_numeric_columns(final_sessions))
         make_csv_download(final_sessions, filename="Session_Summary.csv")
 
-        avg_cols = [c for c in final_sessions.columns if str(c).endswith(" Avg")]
-        if avg_cols:
-            plot_df = final_sessions[avg_cols].reset_index().melt(
-                id_vars="Session", value_vars=avg_cols,
-                var_name="file_var", value_name="Average"
-            )
-            plot_df["File"] = plot_df["file_var"].str.replace(r"\s*Avg$", "", regex=True)
-            fig = px.bar(plot_df, x="Session", y="Average", color="File", barmode="group",
-                         title="Session averages by file (grouped)")
-            st.plotly_chart(fig)
+        fig = px.bar(
+            final_sessions.reset_index().melt(
+                id_vars="Session",
+                var_name="File",
+                value_name="Average"
+            ),
+            x="Session",
+            y="Average",
+            color="File",
+            barmode="group",
+            title="Session averages by file"
+        )
+        st.plotly_chart(fig)
 else:
     st.info("Upload one or more CSV/XLSX files to generate comparison tables.")
