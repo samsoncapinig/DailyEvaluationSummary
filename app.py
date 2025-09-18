@@ -113,16 +113,15 @@ def add_overall_summary(df):
         return pd.concat([df, overall_df], axis=1)
     return df
 
-def make_excel_download(df, filename="summary.xlsx"):
-    """Generate Excel file download button for a dataframe."""
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        df.to_excel(writer, index=True, sheet_name="Sheet1")
+def make_csv_download(df, filename="summary.csv"):
+    """Generate CSV file download button for a dataframe."""
+    buffer = io.StringIO()
+    df.to_csv(buffer)
     st.download_button(
         label=f"⬇️ Download {filename}",
         data=buffer.getvalue(),
         file_name=filename,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        mime="text/csv"
     )
 
 # -------------------------
@@ -163,7 +162,7 @@ if uploaded_files is not None and len(uploaded_files) > 0:
 
         st.subheader("📌 Category Averages Comparison")
         st.dataframe(style_numeric_columns(final_summary))
-        make_excel_download(final_summary, filename="Category_Summary.xlsx")
+        make_csv_download(final_summary, filename="Category_Summary.csv")
 
         avg_cols = [c for c in final_summary.columns if str(c).endswith(" Avg")]
         if avg_cols:
@@ -184,7 +183,7 @@ if uploaded_files is not None and len(uploaded_files) > 0:
 
         st.subheader("📌 Session Averages Comparison")
         st.dataframe(style_numeric_columns(final_sessions))
-        make_excel_download(final_sessions, filename="Session_Summary.xlsx")
+        make_csv_download(final_sessions, filename="Session_Summary.csv")
 
         avg_cols = [c for c in final_sessions.columns if str(c).endswith(" Avg")]
         if avg_cols:
