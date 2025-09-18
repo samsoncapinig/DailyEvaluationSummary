@@ -1,18 +1,63 @@
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import re
+import io
+
+st.set_page_config(page_title="Daily Evaluation Summary App", layout="wide")
+st.title("📊 Daily Evaluation Summary App")
+
+# -------------------------
+# Helpers
+# -------------------------
+@st.cache_data
+def load_file(uploaded_file):
+    if uploaded_file.name.lower().endswith(".csv"):
+        df = pd.read_csv(uploaded_file)
+    else:
+        df = pd.read_excel(uploaded_file)
+    return df.loc[:, ~df.columns.str.contains(r'^Unnamed', regex=True)]
+
+def categorize_columns(df):
+    categories = {
+        "PROGRAM MANAGEMENT": [],
+        "TRAINING VENUE": [],
+        "FOOD/MEALS": [],
+        "ACCOMMODATION": [],
+        "SESSION": []
+    }
+    for col in df.columns:
+        col_str = str(col).upper()
+        if "PROGRAM MANAGEMENT" in col_str:
+            categories["PROGRAM MANAGEMENT"].append(col)
+        elif "TRAINING VENUE" in col_str:
+            categories["TRAINING VENUE"].append(col)
+        elif "FOOD/MEALS" in col_str:
+            categories["FOOD/MEALS"].append(col)
+        elif "ACCOMMODATION" in col_str:
+            categories["ACCOMMODATION"].append(col)
+        elif any(key in col_str for key in [
+            "PROGRAM OBJECTIVES", "LR MATERIALS",
+            "CONTENT RELEVANCE", "RP/SUBJECT MATTER EXPERT KNOWLEDGE"
+        ]):
+            categories["SESSION"].append(col)
+    return categories
+
 def compute_category_averages(df, categories, file_name):
-    """Compute averages + respondent counts for non-session categories."""
     stats = {}
     for cat in ["PROGRAM MANAGEMENT", "TRAINING VENUE", "FOOD/MEALS", "ACCOMMODATION"]:
-        cols = categories[cat]
-        if cols:
-            avg_score = df[cols].mean().mean().round(2)
-            respondent_count = df[cols].count().max()
-            stats[cat] = {f"{file_name} Avg": avg_score, f"{file_name} N": respondent_count}
-
+        cols = categories.get(cat, [])
+        if not cols:
+            continue
+        sub = df[cols].apply(pd.to_numeric, errors='coerce')
+        stacked = sub.stack()
+        avg = float(stacked.mean()) if not stacked.empty else float("nan")
+        n = sub.dropna(how="all").shape[0]
+        stats[cat] = {f"{file_name} Avg": round(avg, 2) if pd.notna(avg) else None,
+                      f"{file_name} N": int(n)}
     return pd.DataFrame(stats).T if stats else None
 
-
 def compute_session_averages(df, session_cols, file_name):
-    """Group session columns by DAY/LM and compute averages + respondent counts."""
     session_groups = {}
     for col in session_cols:
         col_str = str(col)
@@ -33,41 +78,123 @@ def compute_session_averages(df, session_cols, file_name):
 
     stats = {}
     for session, cols in session_groups.items():
-        avg_score = df[cols].mean().mean().round(2)
-        respondent_count = df[cols].count().max()
-        stats[session] = {f"{file_name} Avg": avg_score, f"{file_name} N": respondent_count}
+        sub = df[cols].apply(pd.to_numeric, errors='coerce')
+        stacked = sub.stack()
+        avg = float(stacked.mean()) if not stacked.empty else float("nan")
+        n = sub.dropna(how="all").shape[0]
+        stats[session] = {f"{file_name} Avg": round(avg, 2) if pd.notna(avg) else None,
+                          f"{file_name} N": int(n)}
+    return pd.DataFrame(stats).T if stats else None
 
-    return pd.DataFrame(stats).T
+def style_numeric_columns(df):
+    fmt = {}
+    for col in df.columns:
+        if str(col).endswith(" Avg"):
+            fmt[col] = "{:.2f}"
+        elif str(col).endswith(" N"):
+            fmt[col] = "{:.0f}"
+    return df.style.format(fmt)
 
+def add_overall_summary(df):
+    """Add a 'Grand Average' row across all files."""
+    avg_cols = [c for c in df.columns if str(c).endswith(" Avg")]
+    n_cols = [c for c in df.columns if str(c).endswith(" N")]
+
+    overall = {}
+    if avg_cols:
+        overall_avg = df[avg_cols].mean(axis=1)
+        overall["Overall Avg"] = overall_avg.round(2)
+    if n_cols:
+        overall_n = df[n_cols].sum(axis=1)
+        overall["Overall N"] = overall_n.astype(int)
+
+    if overall:
+        overall_df = pd.DataFrame(overall, index=df.index)
+        return pd.concat([df, overall_df], axis=1)
+    return df
+
+def make_excel_download(df, filename="summary.xlsx"):
+    """Generate Excel file download button for a dataframe."""
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df.to_excel(writer, index=True, sheet_name="Sheet1")
+    st.download_button(
+        label=f"⬇️ Download {filename}",
+        data=buffer.getvalue(),
+        file_name=filename,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
 # -------------------------
-# Main Display Update
+# Main App
 # -------------------------
-if uploaded_files:
-    combined_summary, combined_sessions = [], []
+uploaded_files = st.file_uploader(
+    "📂 Upload one or more CSV/XLSX files",
+    type=["csv", "xlsx"],
+    accept_multiple_files=True
+)
+
+if uploaded_files is not None and len(uploaded_files) > 0:
+    combined_summary = []
+    combined_sessions = []
 
     for uploaded_file in uploaded_files:
-        df = load_file(uploaded_file)
+        try:
+            df = load_file(uploaded_file)
+        except Exception as e:
+            st.error(f"Could not read {uploaded_file.name}: {e}")
+            continue
+
         categories = categorize_columns(df)
 
-        # Categories
-        summary_df = compute_category_averages(df, categories, uploaded_file.name)
-        if summary_df is not None:
-            combined_summary.append(summary_df)
+        cat_df = compute_category_averages(df, categories, uploaded_file.name)
+        if cat_df is not None:
+            combined_summary.append(cat_df)
 
-        # Sessions
-        session_df = compute_session_averages(df, categories["SESSION"], uploaded_file.name)
-        if session_df is not None:
-            combined_sessions.append(session_df)
+        sess_df = compute_session_averages(df, categories.get("SESSION", []), uploaded_file.name)
+        if sess_df is not None:
+            combined_sessions.append(sess_df)
 
-    # ---- Category comparison (side-by-side columns) ----
+    # ---- Category comparison ----
     if combined_summary:
-        final_summary = pd.concat(combined_summary, axis=1)
-        st.subheader("📌 Category Averages Comparison")
-        st.dataframe(final_summary.style.format("{:.2f}"))
+        final_summary = pd.concat(combined_summary, axis=1).sort_index()
+        final_summary = add_overall_summary(final_summary)
+        final_summary.index.name = "Category"
 
-    # ---- Session comparison (side-by-side columns) ----
+        st.subheader("📌 Category Averages Comparison")
+        st.dataframe(style_numeric_columns(final_summary))
+        make_excel_download(final_summary, filename="Category_Summary.xlsx")
+
+        avg_cols = [c for c in final_summary.columns if str(c).endswith(" Avg")]
+        if avg_cols:
+            plot_df = final_summary[avg_cols].reset_index().melt(
+                id_vars="Category", value_vars=avg_cols,
+                var_name="file_var", value_name="Average"
+            )
+            plot_df["File"] = plot_df["file_var"].str.replace(r"\s*Avg$", "", regex=True)
+            fig = px.bar(plot_df, x="Category", y="Average", color="File", barmode="group",
+                         title="Category averages by file (grouped)")
+            st.plotly_chart(fig)
+
+    # ---- Session comparison ----
     if combined_sessions:
-        final_sessions = pd.concat(combined_sessions, axis=1)
+        final_sessions = pd.concat(combined_sessions, axis=1).sort_index()
+        final_sessions = add_overall_summary(final_sessions)
+        final_sessions.index.name = "Session"
+
         st.subheader("📌 Session Averages Comparison")
-        st.dataframe(final_sessions.style.format("{:.2f}"))
+        st.dataframe(style_numeric_columns(final_sessions))
+        make_excel_download(final_sessions, filename="Session_Summary.xlsx")
+
+        avg_cols = [c for c in final_sessions.columns if str(c).endswith(" Avg")]
+        if avg_cols:
+            plot_df = final_sessions[avg_cols].reset_index().melt(
+                id_vars="Session", value_vars=avg_cols,
+                var_name="file_var", value_name="Average"
+            )
+            plot_df["File"] = plot_df["file_var"].str.replace(r"\s*Avg$", "", regex=True)
+            fig = px.bar(plot_df, x="Session", y="Average", color="File", barmode="group",
+                         title="Session averages by file (grouped)")
+            st.plotly_chart(fig)
+else:
+    st.info("Upload one or more CSV/XLSX files to generate comparison tables.")
